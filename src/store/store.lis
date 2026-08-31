@@ -7,6 +7,7 @@ import "go:sort"
 import "go:strings"
 
 import "objects"
+import "utils"
 
 pub struct Store {
   pub index: mut Map<string, string>,
@@ -166,18 +167,9 @@ pub fn read_object(
     let mut re = bytes.NewReader(_bytes)
     if let Ok(r) = zlib.NewReader(re) {
       defer r.Close()
-      match io.ReadAll(r) {
-        Ok(t) => {
-          let idx = bytes.Index(t, [0])
-          if let Some(_idx) = idx { return Ok(t[_idx + 1..]) }
-        },
-        Both(_, err) => {
-          return Err(err)
-        },
-        Err(err) => {
-          return Err(err)
-        },
-      }
+      let b = utils.partial_to_result(io.ReadAll(r))?
+      let idx = bytes.Index(b, [0])
+      if let Some(_idx) = idx { return Ok(b[_idx + 1..]) }
     }
   }
 

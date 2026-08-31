@@ -70,7 +70,7 @@ fn catfile_cmd() -> Ref<cobra.Command> {
     Short: "",
     RunE: Some(|_: Ref<cobra.Command>, _: Slice<string>| -> Result<(), error> {
       let out = store.read_object(".minigit", hash)?
-      fmt.Println(out as string)
+      if !out.is_empty() { fmt.Println(out as string) }
       Ok(())
     }),
     ..,
