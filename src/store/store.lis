@@ -4,6 +4,7 @@ import "go:errors"
 import "go:fmt"
 import "go:io"
 import "go:os"
+import "go:path/filepath"
 import "go:sort"
 import "go:strings"
 
@@ -113,7 +114,14 @@ impl Store {
     minigit_dir: string,
     branch: string,
   ) -> Result<(), error> {
-    write_ref(minigit_dir, branch, "")?
+    let (current, isref) = read_head(minigit_dir, "HEAD")
+    let _current = if isref {
+      let (ref_current, _) = read_head(minigit_dir, current)
+      ref_current
+    } else {
+      current
+    }
+    write_ref(minigit_dir, branch, _current)?
     let content = f"ref: refs/heads/{branch}"
     os.WriteFile(minigit_dir + "/HEAD", content.bytes(), 0o644)?
     Ok(())
@@ -196,11 +204,16 @@ pub fn log(minigit_dir: string) -> Result<(), error> {
     current
   }
   if !head.is_empty() { fmt.Println(f"HEAD -> {head}") }
+  let branchs = get_branchs(minigit_dir)
   while !_current.is_empty() {
     let content = read_object(minigit_dir, _current)?
     let (_, parent, message) = parse_commit(content)?
 
-    fmt.Println(f"○ {_current}")
+    if let Some(branch) = branchs.get(_current) {
+      fmt.Println(f"○ {_current} ({branch})")
+    } else {
+      fmt.Println(f"○ {_current}")
+    }
     fmt.Println(f"│  {message}")
 
     _current = parent
@@ -227,7 +240,21 @@ pub fn read_object(
   Ok([])
 }
 
-pub fn checkout(minigit_dir: string, commit_hash: string) -> Result<(), error> {
+pub fn checkout(minigit_dir: string, target: string) -> Result<(), error> {
+  let branch_path = minigit_dir + "/refs/heads/" + target
+  let mut commit_hash = ""
+
+  if let Ok(hash_bytes) = os.ReadFile(branch_path) {
+    commit_hash = hash_bytes as string
+    os.WriteFile(
+      minigit_dir + "/HEAD",
+      ("ref: refs/heads/" + target).bytes(),
+      0o644,
+    )?
+  } else {
+    commit_hash = target
+  }
+
   let commit_content = read_object(minigit_dir, commit_hash)?
   let (tree_hash, _parent, _msg) = parse_commit(commit_content)?
   let tree_content = read_object(minigit_dir, tree_hash)?
@@ -240,4 +267,29 @@ pub fn checkout(minigit_dir: string, commit_hash: string) -> Result<(), error> {
     os.WriteFile(parts[2], blob_content, 0o644)?
   }
   Ok(())
+}
+
+pub fn get_branchs(minigit_dir: string) -> Map<string, string> {
+  let mut map = Map.new<string, string>()
+  let dir = minigit_dir + "/refs/heads"
+  if os.Stat(dir).is_ok() {
+    let mut paths = Slice.new<string>()
+    let _ = filepath.Walk(dir, |path, info, err| {
+      if !info.IsDir() {
+        paths = paths.append(path)
+        return Ok(())
+      }
+      Err(err)
+    })
+
+    for path in paths {
+      if let Ok(lines) = os.ReadFile(path) {
+        let hash = lines as string
+        let branch = filepath.Base(path)
+        map[hash] = branch
+      }
+    }
+  }
+
+  map
 }
