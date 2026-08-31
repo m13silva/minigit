@@ -80,6 +80,41 @@ fn catfile_cmd() -> Ref<cobra.Command> {
   &cmd
 }
 
+fn branch_cmd(st: mut Ref<store.Store>) -> Ref<cobra.Command> {
+  let mut create = false
+  let mut cmd = cobra.Command {
+    Use: "branch",
+    Short: "",
+    Args: Some(cobra.ExactArgs(1)),
+    RunE: Some(
+      |_: Ref<cobra.Command>, args: Slice<string>| -> Result<(), error> {
+        if create { st.create_branch(".minigit", args[0])? }
+        Ok(())
+      },
+    ),
+    ..,
+  }
+
+  cmd.Flags().BoolVarP(&create, "create", "c", false, "crear un branch")
+  &cmd
+}
+
+fn checkout_cmd() -> Ref<cobra.Command> {
+  let mut cmd = cobra.Command {
+    Use: "checkout",
+    Short: "",
+    Args: Some(cobra.ExactArgs(1)),
+    RunE: Some(
+      |_: Ref<cobra.Command>, args: Slice<string>| -> Result<(), error> {
+        store.checkout(".minigit", args[0])?
+        Ok(())
+      },
+    ),
+    ..,
+  }
+  &cmd
+}
+
 pub fn root_command(st: mut Ref<store.Store>) -> mut cobra.Command {
   let mut root = cobra.Command { Use: "minigit", .. }
   root.AddCommand(
@@ -88,6 +123,8 @@ pub fn root_command(st: mut Ref<store.Store>) -> mut cobra.Command {
     commit_cmd(st),
     log_cmd(),
     catfile_cmd(),
+    checkout_cmd(),
+    branch_cmd(st),
   )
   root
 }

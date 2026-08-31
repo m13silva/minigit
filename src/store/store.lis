@@ -1,5 +1,6 @@
 import "go:bytes"
 import "go:compress/zlib"
+import "go:errors"
 import "go:fmt"
 import "go:io"
 import "go:os"
@@ -74,20 +75,24 @@ impl Store {
     message: string,
   ) -> Result<string, error> {
     let tree_hash = self.write_tree(minigit_dir)?
-    let mut parent_hash = ""
-    if let Ok(lines) = os.ReadFile(minigit_dir + "/HEAD") {
-      parent_hash = lines as string
+    let (parent_hash, isref) = read_head(minigit_dir, "HEAD")
+    let (_parent_hash, head) = if isref {
+      let (ref_parent_hash, _) = read_head(minigit_dir, parent_hash)
+      (ref_parent_hash, minigit_dir + "/" + parent_hash)
+    } else {
+      (parent_hash, minigit_dir + "/HEAD")
     }
-    let p_hash = if parent_hash.is_empty() {
+
+    let p_hash = if _parent_hash.is_empty() {
       ""
     } else {
-      f"parent {parent_hash}\n"
+      f"parent {_parent_hash}\n"
     }
     let content = (f"tree {tree_hash}\n" + p_hash + f"message {message}\n").bytes()
     let (hex, compressed) = objects.hash_object("commit", content)?
     write_object(minigit_dir, hex, compressed)?
-    os.WriteFile(minigit_dir + "/HEAD", hex.bytes(), 0o644)?
-    Ok(hex)
+    os.WriteFile(head, hex.bytes(), 0o644)?
+    Ok("")
   }
 
   pub fn add(
@@ -100,6 +105,17 @@ impl Store {
     write_object(minigit_dir, hex, compressed)?
     self.add_index(path, hex)
     self.write_index(minigit_dir)?
+    Ok(())
+  }
+
+  pub fn create_branch(
+    self: mut Ref<Store>,
+    minigit_dir: string,
+    branch: string,
+  ) -> Result<(), error> {
+    write_ref(minigit_dir, branch, "")?
+    let content = f"ref: refs/heads/{branch}"
+    os.WriteFile(minigit_dir + "/HEAD", content.bytes(), 0o644)?
     Ok(())
   }
 }
@@ -118,7 +134,23 @@ pub fn write_object(
   Ok(())
 }
 
-pub fn parse_commit(content: Slice<byte>) -> (string, string, string) {
+pub fn write_ref(
+  minigit_dir: string,
+  ref: string,
+  content: string,
+) -> Result<(), error> {
+  let dir = minigit_dir + "/refs/heads/"
+  let path = dir + ref
+  if os.Stat(path).is_err() {
+    os.MkdirAll(dir, 0o755)?
+    os.WriteFile(path, content.bytes(), 0o644)?
+  }
+  Ok(())
+}
+
+pub fn parse_commit(
+  content: Slice<byte>,
+) -> Result<(string, string, string), error> {
   let content_str = content as string
   let lines = strings.Split(content_str, "\n")
   let mut tree_hash = ""
@@ -134,25 +166,44 @@ pub fn parse_commit(content: Slice<byte>) -> (string, string, string) {
       message = line.substring(8..)
     }
   }
-  (tree_hash, parent_hash, message)
+  if tree_hash.is_empty() { return Err(errors.New("invalid hash")) }
+  Ok((tree_hash, parent_hash, message))
 }
 
-pub fn read_head(minigit_dir: string) -> string {
+pub fn read_head(minigit_dir: string, path: string) -> (string, bool) {
   let mut parent_hash = ""
-  if let Ok(lines) = os.ReadFile(minigit_dir + "/HEAD") {
+  let mut isref = false
+  if let Ok(lines) = os.ReadFile(minigit_dir + "/" + path) {
     parent_hash = lines as string
+    if parent_hash.starts_with("ref: ") {
+      if let Some(cut) = strings.CutPrefix(parent_hash, "ref: ") {
+        parent_hash = cut
+        isref = true
+      }
+    }
   }
-  parent_hash
+  (parent_hash, isref)
 }
 
 pub fn log(minigit_dir: string) -> Result<(), error> {
-  let mut current = read_head(minigit_dir)
-  while !current.is_empty() {
-    let content = read_object(minigit_dir, current)?
-    let (_, parent, message) = parse_commit(content)
-    fmt.Println(f"commit {current}")
-    fmt.Println(f"    {message}")
-    current = parent
+  let (current, isref) = read_head(minigit_dir, "HEAD")
+  let mut head = ""
+  let mut _current = if isref {
+    let (ref_current, _) = read_head(minigit_dir, current)
+    if let Some(cut) = strings.CutPrefix(current, "refs/heads/") { head = cut }
+    ref_current
+  } else {
+    current
+  }
+  if !head.is_empty() { fmt.Println(f"HEAD -> {head}") }
+  while !_current.is_empty() {
+    let content = read_object(minigit_dir, _current)?
+    let (_, parent, message) = parse_commit(content)?
+
+    fmt.Println(f"○ {_current}")
+    fmt.Println(f"│  {message}")
+
+    _current = parent
   }
   Ok(())
 }
@@ -174,4 +225,19 @@ pub fn read_object(
   }
 
   Ok([])
+}
+
+pub fn checkout(minigit_dir: string, commit_hash: string) -> Result<(), error> {
+  let commit_content = read_object(minigit_dir, commit_hash)?
+  let (tree_hash, _parent, _msg) = parse_commit(commit_content)?
+  let tree_content = read_object(minigit_dir, tree_hash)?
+  let tree_str = tree_content as string
+  let lines = strings.Split(tree_str, "\n")
+  for line in lines {
+    if line.is_empty() { continue }
+    let parts = strings.Split(line, " ")
+    let blob_content = read_object(minigit_dir, parts[1])?
+    os.WriteFile(parts[2], blob_content, 0o644)?
+  }
+  Ok(())
 }
