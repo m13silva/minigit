@@ -1,0 +1,13 @@
+pub fn partial_to_result<T, U>(partial: Partial<T, U>) -> Result<T, U> {
+  match partial {
+    Ok(ok) => {
+      Ok(ok)
+    },
+    Both(_, err) => {
+      Err(err)
+    },
+    Err(err) => {
+      Err(err)
+    },
+  }
+}

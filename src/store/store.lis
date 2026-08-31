@@ -62,7 +62,7 @@ impl Store {
       builder.WriteString(f"blob {hex} {path}\n")
     }
     let tree_content = builder.String().bytes()
-    let (hex, compressed) = objects.hash_object("tree", tree_content as string)
+    let (hex, compressed) = objects.hash_object("tree", tree_content)?
     write_object(minigit_dir, hex, compressed)?
     Ok(hex)
   }
@@ -82,8 +82,8 @@ impl Store {
     } else {
       f"parent {parent_hash}\n"
     }
-    let content = f"tree {tree_hash}\n" + p_hash + f"message {message}\n"
-    let (hex, compressed) = objects.hash_object("commit", content)
+    let content = (f"tree {tree_hash}\n" + p_hash + f"message {message}\n").bytes()
+    let (hex, compressed) = objects.hash_object("commit", content)?
     write_object(minigit_dir, hex, compressed)?
     os.WriteFile(minigit_dir + "/HEAD", hex.bytes(), 0o644)?
     Ok(hex)
@@ -95,7 +95,7 @@ impl Store {
     path: string,
   ) -> Result<(), error> {
     let content = os.ReadFile(path)?
-    let (hex, compressed) = objects.hash_object("blob", content as string)
+    let (hex, compressed) = objects.hash_object("blob", content)?
     write_object(minigit_dir, hex, compressed)?
     self.add_index(path, hex)
     self.write_index(minigit_dir)?
