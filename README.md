@@ -1,0 +1,5 @@
+# minigit
+
+```bash
+lis run
+```

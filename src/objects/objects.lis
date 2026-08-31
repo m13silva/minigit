@@ -1,0 +1,22 @@
+import "go:bytes"
+import "go:compress/zlib"
+import "go:crypto/sha1"
+import "go:fmt"
+
+pub fn hash_object(obj_type: string, content: string) -> (string, Slice<byte>) {
+  let header = f"{obj_type} {content.length()}\0"
+
+  let mut buf = bytes.Buffer {}
+  let mut w = zlib.NewWriter(&buf)
+  match w.Write((header + content).bytes()) {
+    Ok(_) => (),
+    Both(_, _) => (),
+    Err(_) => (),
+  }
+  w.Close()
+
+  let hex_sha1 = sha1.Sum((header + content).bytes())
+  let hex = fmt.Sprintf("%x", hex_sha1)
+
+  (hex, buf.Bytes())
+}

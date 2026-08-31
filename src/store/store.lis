@@ -1,0 +1,185 @@
+import "go:bytes"
+import "go:compress/zlib"
+import "go:fmt"
+import "go:io"
+import "go:os"
+import "go:sort"
+import "go:strings"
+
+import "objects"
+
+pub struct Store {
+  pub index: mut Map<string, string>,
+}
+
+impl Store {
+  pub fn new() -> mut Store {
+    Store { index: Map.new<string, string>() }
+  }
+
+  pub fn add_index(self: mut Ref<Store>, path: string, hex: string) {
+    self.index[path] = hex
+  }
+
+  pub fn load_index(self: mut Ref<Store>, minigit_dir: string) {
+    let index = minigit_dir + "/index"
+    if let Ok(lines) = os.ReadFile(index) {
+      let _lines = bytes.Split(lines, ['\n'])
+      for line in _lines {
+        let sp = bytes.Split(line, [' '])
+        if sp.length() == 2 {
+          let hex = sp[0] as string
+          let path = sp[1] as string
+          self.index[path] = hex
+        }
+      }
+    }
+  }
+
+  pub fn write_index(self: Ref<Store>, minigit_dir: string) -> Result<(), error> {
+    let index = minigit_dir + "/index"
+    let mut data = strings.Builder { .. }
+    for (path, hex) in self.index {
+      data.WriteString(f"{hex} {path}\n")
+    }
+    os.WriteFile(index, data.String().bytes(), 0o644)?
+    Ok(())
+  }
+
+  pub fn write_tree(
+    self: mut Ref<Store>,
+    minigit_dir: string,
+  ) -> Result<string, error> {
+    let mut paths = Slice.new<string>()
+    self.load_index(".minigit")
+    for (p, _) in self.index {
+      paths = paths.append(p)
+    }
+    sort.Strings(paths)
+    let mut builder = strings.Builder { .. }
+    for path in paths {
+      let hex = self.index[path]
+      builder.WriteString(f"blob {hex} {path}\n")
+    }
+    let tree_content = builder.String().bytes()
+    let (hex, compressed) = objects.hash_object("tree", tree_content as string)
+    write_object(minigit_dir, hex, compressed)?
+    Ok(hex)
+  }
+
+  pub fn commit(
+    self: mut Ref<Store>,
+    minigit_dir: string,
+    message: string,
+  ) -> Result<string, error> {
+    let tree_hash = self.write_tree(minigit_dir)?
+    let mut parent_hash = ""
+    if let Ok(lines) = os.ReadFile(minigit_dir + "/HEAD") {
+      parent_hash = lines as string
+    }
+    let p_hash = if parent_hash.is_empty() {
+      ""
+    } else {
+      f"parent {parent_hash}\n"
+    }
+    let content = f"tree {tree_hash}\n" + p_hash + f"message {message}\n"
+    let (hex, compressed) = objects.hash_object("commit", content)
+    write_object(minigit_dir, hex, compressed)?
+    os.WriteFile(minigit_dir + "/HEAD", hex.bytes(), 0o644)?
+    Ok(hex)
+  }
+
+  pub fn add(
+    self: mut Ref<Store>,
+    minigit_dir: string,
+    path: string,
+  ) -> Result<(), error> {
+    let content = os.ReadFile(path)?
+    let (hex, compressed) = objects.hash_object("blob", content as string)
+    write_object(minigit_dir, hex, compressed)?
+    self.add_index(path, hex)
+    self.write_index(minigit_dir)?
+    Ok(())
+  }
+}
+
+pub fn write_object(
+  minigit_dir: string,
+  hex: string,
+  compressed: Slice<byte>,
+) -> Result<(), error> {
+  let dir = minigit_dir + "/objects/" + hex.substring(..2)
+  let path = dir + "/" + hex.substring(2..)
+  if os.Stat(path).is_err() {
+    os.MkdirAll(dir, 0o755)?
+    os.WriteFile(path, compressed, 0o644)?
+  }
+  Ok(())
+}
+
+pub fn parse_commit(content: Slice<byte>) -> (string, string, string) {
+  let content_str = content as string
+  let lines = strings.Split(content_str, "\n")
+  let mut tree_hash = ""
+  let mut parent_hash = ""
+  let mut message = ""
+
+  for line in lines {
+    if strings.HasPrefix(line, "tree ") {
+      tree_hash = line.substring(5..)
+    } else if strings.HasPrefix(line, "parent ") {
+      parent_hash = line.substring(7..)
+    } else if strings.HasPrefix(line, "message ") {
+      message = line.substring(8..)
+    }
+  }
+  (tree_hash, parent_hash, message)
+}
+
+pub fn read_head(minigit_dir: string) -> string {
+  let mut parent_hash = ""
+  if let Ok(lines) = os.ReadFile(minigit_dir + "/HEAD") {
+    parent_hash = lines as string
+  }
+  parent_hash
+}
+
+pub fn log(minigit_dir: string) -> Result<(), error> {
+  let mut current = read_head(minigit_dir)
+  while !current.is_empty() {
+    let content = read_object(minigit_dir, current)?
+    let (_, parent, message) = parse_commit(content)
+    fmt.Println(f"commit {current}")
+    fmt.Println(f"    {message}")
+    current = parent
+  }
+  Ok(())
+}
+
+pub fn read_object(
+  minigit_dir: string,
+  hex: string,
+) -> Result<Slice<byte>, error> {
+  let path = minigit_dir + "/objects/" + hex.substring(..2) + "/" +
+  hex.substring(2..)
+  if let Ok(_bytes) = os.ReadFile(path) {
+    let mut re = bytes.NewReader(_bytes)
+    if let Ok(r) = zlib.NewReader(re) {
+      defer r.Close()
+      match io.ReadAll(r) {
+        Ok(t) => {
+          let idx = bytes.Index(t, [0])
+          if let Some(_idx) = idx { return Ok(t[_idx + 1..]) }
+        },
+        Both(_, err) => {
+          return Err(err)
+        },
+        Err(err) => {
+          return Err(err)
+        },
+      }
+    }
+  }
+
+  Ok([])
+}

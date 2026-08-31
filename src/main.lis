@@ -1,0 +1,10 @@
+import "go:os"
+
+import "cli"
+import "store"
+
+fn main() {
+  let mut st = store.Store.new()
+  let mut root = cli.root_command(&st)
+  if root.Execute().is_err() { os.Exit(1) }
+}

@@ -1,0 +1,93 @@
+import "go:fmt"
+import "go:github.com/spf13/cobra"
+import "go:os"
+
+import "store"
+
+fn init_cmd() -> Ref<cobra.Command> {
+  let mut cmd = cobra.Command {
+    Use: "init",
+    Short: "",
+    RunE: Some(|_: Ref<cobra.Command>, _: Slice<string>| -> Result<(), error> {
+      let dir = ".minigit" + "/objects/"
+      if os.Stat(dir).is_err() { os.MkdirAll(dir, 0o755)? }
+      Ok(())
+    }),
+    ..,
+  }
+  &cmd
+}
+
+fn add_cmd(st: mut Ref<store.Store>) -> Ref<cobra.Command> {
+  let mut cmd = cobra.Command {
+    Use: "add",
+    Short: "",
+    Args: Some(cobra.ExactArgs(1)),
+    RunE: Some(
+      |_: Ref<cobra.Command>, args: Slice<string>| -> Result<(), error> {
+        st.add(".minigit", args[0])?
+        Ok(())
+      },
+    ),
+    ..,
+  }
+  &cmd
+}
+
+fn log_cmd() -> Ref<cobra.Command> {
+  let mut cmd = cobra.Command {
+    Use: "log",
+    Short: "",
+    RunE: Some(|_: Ref<cobra.Command>, _: Slice<string>| -> Result<(), error> {
+      store.log(".minigit")?
+      Ok(())
+    }),
+    ..,
+  }
+  &cmd
+}
+
+fn commit_cmd(st: mut Ref<store.Store>) -> Ref<cobra.Command> {
+  let mut message = ""
+  let mut cmd = cobra.Command {
+    Use: "commit",
+    Short: "",
+    RunE: Some(|_: Ref<cobra.Command>, _: Slice<string>| -> Result<(), error> {
+      let _ = st.commit(".minigit", message)?
+      Ok(())
+    }),
+    ..,
+  }
+
+  cmd.Flags().StringVarP(&message, "message", "m", "", "mensaje del commit")
+  &cmd
+}
+
+fn catfile_cmd() -> Ref<cobra.Command> {
+  let mut hash = ""
+  let mut cmd = cobra.Command {
+    Use: "cat-file",
+    Short: "",
+    RunE: Some(|_: Ref<cobra.Command>, _: Slice<string>| -> Result<(), error> {
+      let out = store.read_object(".minigit", hash)?
+      fmt.Println(out as string)
+      Ok(())
+    }),
+    ..,
+  }
+
+  cmd.Flags().StringVarP(&hash, "p", "p", "", "hash del commit")
+  &cmd
+}
+
+pub fn root_command(st: mut Ref<store.Store>) -> mut cobra.Command {
+  let mut root = cobra.Command { Use: "minigit", .. }
+  root.AddCommand(
+    init_cmd(),
+    add_cmd(st),
+    commit_cmd(st),
+    log_cmd(),
+    catfile_cmd(),
+  )
+  root
+}
